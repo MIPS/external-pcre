@@ -23,6 +23,13 @@ libpcre_src_files := \
     dist/pcre_version.c \
     dist/pcre_xclass.c
 
+libpcrecpp_src_files := \
+    dist/pcrecpp.cc \
+    dist/pcre_scanner.cc \
+    dist/pcre_stringpiece.cc
+
+# === libpcre targets ===
+
 include $(CLEAR_VARS)
 LOCAL_MODULE := libpcre
 LOCAL_CFLAGS += -DHAVE_CONFIG_H
@@ -44,3 +51,31 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/dist
 LOCAL_SRC_FILES := $(libpcre_src_files)
 include $(BUILD_SHARED_LIBRARY)
 
+# === libpcrecpp targets ===
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := libpcrecpp
+LOCAL_CFLAGS += -DHAVE_CONFIG_H
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/dist
+LOCAL_CPP_EXTENSION := .cc
+LOCAL_SRC_FILES := $(libpcrecpp_src_files)
+LOCAL_STATIC_LIBRARIES := libpcre
+include $(BUILD_HOST_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := libpcrecpp
+LOCAL_CFLAGS += -DHAVE_CONFIG_H
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/dist
+LOCAL_CPP_EXTENSION := .cc
+LOCAL_SRC_FILES := $(libpcrecpp_src_files)
+LOCAL_STATIC_LIBRARIES := libpcre
+include $(BUILD_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := libpcrecpp
+LOCAL_CFLAGS += -DHAVE_CONFIG_H
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/dist
+LOCAL_CPP_EXTENSION := .cc
+LOCAL_SRC_FILES := $(libpcrecpp_src_files)
+LOCAL_SHARED_LIBRARIES := libpcre
+include $(BUILD_SHARED_LIBRARY)
