@@ -812,10 +812,6 @@ bool Arg::parse_longlong_radix(const char* str,
                                void* dest,
                                int radix) {
 #ifndef HAVE_LONG_LONG
-  (void)(str);
-  (void)(n);
-  (void)(dest);
-  (void)(radix);
   return false;
 #else
   if (n == 0) return false;
@@ -847,10 +843,6 @@ bool Arg::parse_ulonglong_radix(const char* str,
                                 void* dest,
                                 int radix) {
 #ifndef HAVE_UNSIGNED_LONG_LONG
-  (void)(str);
-  (void)(n);
-  (void)(dest);
-  (void)(radix);
   return false;
 #else
   if (n == 0) return false;
