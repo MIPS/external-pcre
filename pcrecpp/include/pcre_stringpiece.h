@@ -50,7 +50,7 @@
 #include <bits/type_traits.h>
 #endif
 
-#include <pcre.h>
+#include <pcre2.h>
 
 using std::memcmp;
 using std::strlen;
@@ -58,7 +58,7 @@ using std::string;
 
 namespace pcrecpp {
 
-class PCRECPP_EXP_DEFN StringPiece {
+class StringPiece {
  private:
   const char*   ptr_;
   int           length_;
@@ -174,7 +174,7 @@ template<> struct __type_traits<pcrecpp::StringPiece> {
 #endif
 
 // allow StringPiece to be logged
-PCRECPP_EXP_DECL std::ostream& operator<<(std::ostream& o,
+extern std::ostream& operator<<(std::ostream& o,
                                           const pcrecpp::StringPiece& piece);
 
 #endif /* _PCRE_STRINGPIECE_H */

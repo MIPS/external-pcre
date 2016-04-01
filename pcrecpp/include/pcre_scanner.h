@@ -53,7 +53,7 @@
 
 namespace pcrecpp {
 
-class PCRECPP_EXP_DEFN Scanner {
+class Scanner {
  public:
   Scanner();
   explicit Scanner(const std::string& input);
@@ -79,12 +79,13 @@ class PCRECPP_EXP_DEFN Scanner {
   //       parsed and stored into the arguments.
   // If it returns true, it skips over the matched input and any
   // following input that matches the "skip" regular expression.
-  bool Consume(const RE& re,
-               const Arg& arg0 = RE::no_arg,
-               const Arg& arg1 = RE::no_arg,
-               const Arg& arg2 = RE::no_arg
-               // TODO: Allow more arguments?
-               );
+  template<typename ... ARGS>
+  bool Consume(const RE& re, ARGS && ... args) {
+    const bool result = re.Consume(&input_, args...);
+    if (result && should_skip_)
+      ConsumeSkip();
+    return result;
+  }
 
   // Set the "skip" regular expression.  If after consuming some data,
   // a prefix of the input matches this RE, it is automatically

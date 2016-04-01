@@ -29,10 +29,6 @@
 //
 // Author: Sanjay Ghemawat
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -44,38 +40,12 @@
 #include <algorithm>
 
 #include "pcrecpp_internal.h"
-#include "pcre.h"
+#include "pcre2.h"
 #include "pcrecpp.h"
 #include "pcre_stringpiece.h"
 
 
 namespace pcrecpp {
-
-// Maximum number of args we can set
-static const int kMaxArgs = 16;
-static const int kVecSize = (1 + kMaxArgs) * 3;  // results + PCRE workspace
-
-// Special object that stands-in for no argument
-Arg RE::no_arg((void*)NULL);
-
-// This is for ABI compatibility with old versions of pcre (pre-7.6),
-// which defined a global no_arg variable instead of putting it in the
-// RE class.  This works on GCC >= 3, at least.  It definitely works
-// for ELF, but may not for other object formats (Mach-O, for
-// instance, does not support aliases.)  We could probably have a more
-// inclusive test if we ever needed it.  (Note that not only the
-// __attribute__ syntax, but also __USER_LABEL_PREFIX__, are
-// gnu-specific.)
-#if defined(__GNUC__) && __GNUC__ >= 3 && defined(__ELF__)
-# define ULP_AS_STRING(x)            ULP_AS_STRING_INTERNAL(x)
-# define ULP_AS_STRING_INTERNAL(x)   #x
-# define USER_LABEL_PREFIX_STR       ULP_AS_STRING(__USER_LABEL_PREFIX__)
-extern Arg no_arg
-  __attribute__((alias(USER_LABEL_PREFIX_STR "_ZN7pcrecpp2RE6no_argE")));
-#endif
-
-// If a regular expression has no error, its error_ field points here
-static const string empty_string;
 
 // If the user doesn't ask for any options, we just use this one
 static RE_Options default_options;
@@ -87,7 +57,7 @@ void RE::Init(const string& pat, const RE_Options* options) {
   } else {
     options_ = *options;
   }
-  error_ = &empty_string;
+  error_ = "";
   re_full_ = NULL;
   re_partial_ = NULL;
 
@@ -98,9 +68,9 @@ void RE::Init(const string& pat, const RE_Options* options) {
 }
 
 void RE::Cleanup() {
-  if (re_full_ != NULL)         (*pcre_free)(re_full_);
-  if (re_partial_ != NULL)      (*pcre_free)(re_partial_);
-  if (error_ != &empty_string)  delete error_;
+  if (re_full_ != NULL)         pcre2_code_free(re_full_);
+  if (re_partial_ != NULL)      pcre2_code_free(re_partial_);
+  error_ = "";
 }
 
 
@@ -108,11 +78,38 @@ RE::~RE() {
   Cleanup();
 }
 
+static void format_pcre_error(int error, string & str) {
+  PCRE2_UCHAR8 buffer[256];
+  auto rc = pcre2_get_error_message(error, buffer, 256);
+  str.assign(reinterpret_cast<string::value_type*>(buffer));
+  if (rc == PCRE2_ERROR_NOMEMORY) {
+    str.append("...");
+  }
+}
 
-pcre* RE::Compile(Anchor anchor) {
+pcre2_code* RE::Compile(Anchor anchor) {
   // First, convert RE_Options into pcre options
   int pcre_options = 0;
   pcre_options = options_.all_options();
+  typedef std::unique_ptr<pcre2_compile_context,
+      decltype(pcre2_compile_context_free)*> compile_context_ptr;
+  compile_context_ptr compile_context(NULL, pcre2_compile_context_free);
+
+  // As of pcre2 the newline mode must be passed through the compile context.
+  // So we only need one if the newline mode is actually set.
+  if (options_.newline_mode()) {
+    compile_context = compile_context_ptr(pcre2_compile_context_create(NULL),
+    pcre2_compile_context_free);
+    if (!compile_context) {
+      error_ = "Unable to allocate memory for pcre2_compile_congext";
+      return NULL;
+    }
+    if (pcre2_set_newline(compile_context.get(),
+                          options_.newline_mode()) == PCRE2_ERROR_BADDATA) {
+      error_ = "REOptions: bad newline mode given";
+      return NULL;
+    }
+  }
 
   // Special treatment for anchoring.  This is needed because at
   // runtime pcre only provides an option for anchoring at the
@@ -126,219 +123,43 @@ pcre* RE::Compile(Anchor anchor) {
   //    ANCHOR_BOTH     Tack a "\z" to the end of the original pattern
   //                    and use a pcre anchored match.
 
-  const char* compile_error;
-  int eoffset;
-  pcre* re;
+  int compile_error;
+  PCRE2_SIZE eoffset;
+  pcre2_code* re;
   if (anchor != ANCHOR_BOTH) {
-    re = pcre_compile(pattern_.c_str(), pcre_options,
-                      &compile_error, &eoffset, NULL);
+    re = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern_.c_str()),
+                       pattern_.length(), pcre_options, &compile_error,
+                       &eoffset, compile_context.get());
   } else {
     // Tack a '\z' at the end of RE.  Parenthesize it first so that
     // the '\z' applies to all top-level alternatives in the regexp.
     string wrapped = "(?:";  // A non-counting grouping operator
     wrapped += pattern_;
     wrapped += ")\\z";
-    re = pcre_compile(wrapped.c_str(), pcre_options,
-                      &compile_error, &eoffset, NULL);
+    re = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(wrapped.c_str()),
+                       wrapped.length(), pcre_options, &compile_error, &eoffset,
+                       compile_context.get());
   }
   if (re == NULL) {
-    if (error_ == &empty_string) error_ = new string(compile_error);
+    format_pcre_error(compile_error, error_);
   }
   return re;
 }
 
 /***** Matching interfaces *****/
 
-bool RE::FullMatch(const StringPiece& text,
-                   const Arg& ptr1,
-                   const Arg& ptr2,
-                   const Arg& ptr3,
-                   const Arg& ptr4,
-                   const Arg& ptr5,
-                   const Arg& ptr6,
-                   const Arg& ptr7,
-                   const Arg& ptr8,
-                   const Arg& ptr9,
-                   const Arg& ptr10,
-                   const Arg& ptr11,
-                   const Arg& ptr12,
-                   const Arg& ptr13,
-                   const Arg& ptr14,
-                   const Arg& ptr15,
-                   const Arg& ptr16) const {
-  const Arg* args[kMaxArgs];
-  int n = 0;
-  if (&ptr1  == &no_arg) goto done; args[n++] = &ptr1;
-  if (&ptr2  == &no_arg) goto done; args[n++] = &ptr2;
-  if (&ptr3  == &no_arg) goto done; args[n++] = &ptr3;
-  if (&ptr4  == &no_arg) goto done; args[n++] = &ptr4;
-  if (&ptr5  == &no_arg) goto done; args[n++] = &ptr5;
-  if (&ptr6  == &no_arg) goto done; args[n++] = &ptr6;
-  if (&ptr7  == &no_arg) goto done; args[n++] = &ptr7;
-  if (&ptr8  == &no_arg) goto done; args[n++] = &ptr8;
-  if (&ptr9  == &no_arg) goto done; args[n++] = &ptr9;
-  if (&ptr10 == &no_arg) goto done; args[n++] = &ptr10;
-  if (&ptr11 == &no_arg) goto done; args[n++] = &ptr11;
-  if (&ptr12 == &no_arg) goto done; args[n++] = &ptr12;
-  if (&ptr13 == &no_arg) goto done; args[n++] = &ptr13;
-  if (&ptr14 == &no_arg) goto done; args[n++] = &ptr14;
-  if (&ptr15 == &no_arg) goto done; args[n++] = &ptr15;
-  if (&ptr16 == &no_arg) goto done; args[n++] = &ptr16;
- done:
-
-  int consumed;
-  int vec[kVecSize];
-  return DoMatchImpl(text, ANCHOR_BOTH, &consumed, args, n, vec, kVecSize);
-}
-
-bool RE::PartialMatch(const StringPiece& text,
-                      const Arg& ptr1,
-                      const Arg& ptr2,
-                      const Arg& ptr3,
-                      const Arg& ptr4,
-                      const Arg& ptr5,
-                      const Arg& ptr6,
-                      const Arg& ptr7,
-                      const Arg& ptr8,
-                      const Arg& ptr9,
-                      const Arg& ptr10,
-                      const Arg& ptr11,
-                      const Arg& ptr12,
-                      const Arg& ptr13,
-                      const Arg& ptr14,
-                      const Arg& ptr15,
-                      const Arg& ptr16) const {
-  const Arg* args[kMaxArgs];
-  int n = 0;
-  if (&ptr1  == &no_arg) goto done; args[n++] = &ptr1;
-  if (&ptr2  == &no_arg) goto done; args[n++] = &ptr2;
-  if (&ptr3  == &no_arg) goto done; args[n++] = &ptr3;
-  if (&ptr4  == &no_arg) goto done; args[n++] = &ptr4;
-  if (&ptr5  == &no_arg) goto done; args[n++] = &ptr5;
-  if (&ptr6  == &no_arg) goto done; args[n++] = &ptr6;
-  if (&ptr7  == &no_arg) goto done; args[n++] = &ptr7;
-  if (&ptr8  == &no_arg) goto done; args[n++] = &ptr8;
-  if (&ptr9  == &no_arg) goto done; args[n++] = &ptr9;
-  if (&ptr10 == &no_arg) goto done; args[n++] = &ptr10;
-  if (&ptr11 == &no_arg) goto done; args[n++] = &ptr11;
-  if (&ptr12 == &no_arg) goto done; args[n++] = &ptr12;
-  if (&ptr13 == &no_arg) goto done; args[n++] = &ptr13;
-  if (&ptr14 == &no_arg) goto done; args[n++] = &ptr14;
-  if (&ptr15 == &no_arg) goto done; args[n++] = &ptr15;
-  if (&ptr16 == &no_arg) goto done; args[n++] = &ptr16;
- done:
-
-  int consumed;
-  int vec[kVecSize];
-  return DoMatchImpl(text, UNANCHORED, &consumed, args, n, vec, kVecSize);
-}
-
-bool RE::Consume(StringPiece* input,
-                 const Arg& ptr1,
-                 const Arg& ptr2,
-                 const Arg& ptr3,
-                 const Arg& ptr4,
-                 const Arg& ptr5,
-                 const Arg& ptr6,
-                 const Arg& ptr7,
-                 const Arg& ptr8,
-                 const Arg& ptr9,
-                 const Arg& ptr10,
-                 const Arg& ptr11,
-                 const Arg& ptr12,
-                 const Arg& ptr13,
-                 const Arg& ptr14,
-                 const Arg& ptr15,
-                 const Arg& ptr16) const {
-  const Arg* args[kMaxArgs];
-  int n = 0;
-  if (&ptr1  == &no_arg) goto done; args[n++] = &ptr1;
-  if (&ptr2  == &no_arg) goto done; args[n++] = &ptr2;
-  if (&ptr3  == &no_arg) goto done; args[n++] = &ptr3;
-  if (&ptr4  == &no_arg) goto done; args[n++] = &ptr4;
-  if (&ptr5  == &no_arg) goto done; args[n++] = &ptr5;
-  if (&ptr6  == &no_arg) goto done; args[n++] = &ptr6;
-  if (&ptr7  == &no_arg) goto done; args[n++] = &ptr7;
-  if (&ptr8  == &no_arg) goto done; args[n++] = &ptr8;
-  if (&ptr9  == &no_arg) goto done; args[n++] = &ptr9;
-  if (&ptr10 == &no_arg) goto done; args[n++] = &ptr10;
-  if (&ptr11 == &no_arg) goto done; args[n++] = &ptr11;
-  if (&ptr12 == &no_arg) goto done; args[n++] = &ptr12;
-  if (&ptr13 == &no_arg) goto done; args[n++] = &ptr13;
-  if (&ptr14 == &no_arg) goto done; args[n++] = &ptr14;
-  if (&ptr15 == &no_arg) goto done; args[n++] = &ptr15;
-  if (&ptr16 == &no_arg) goto done; args[n++] = &ptr16;
- done:
-
-  int consumed;
-  int vec[kVecSize];
-  if (DoMatchImpl(*input, ANCHOR_START, &consumed,
-                  args, n, vec, kVecSize)) {
-    input->remove_prefix(consumed);
-    return true;
-  } else {
-    return false;
-  }
-}
-
-bool RE::FindAndConsume(StringPiece* input,
-                        const Arg& ptr1,
-                        const Arg& ptr2,
-                        const Arg& ptr3,
-                        const Arg& ptr4,
-                        const Arg& ptr5,
-                        const Arg& ptr6,
-                        const Arg& ptr7,
-                        const Arg& ptr8,
-                        const Arg& ptr9,
-                        const Arg& ptr10,
-                        const Arg& ptr11,
-                        const Arg& ptr12,
-                        const Arg& ptr13,
-                        const Arg& ptr14,
-                        const Arg& ptr15,
-                        const Arg& ptr16) const {
-  const Arg* args[kMaxArgs];
-  int n = 0;
-  if (&ptr1  == &no_arg) goto done; args[n++] = &ptr1;
-  if (&ptr2  == &no_arg) goto done; args[n++] = &ptr2;
-  if (&ptr3  == &no_arg) goto done; args[n++] = &ptr3;
-  if (&ptr4  == &no_arg) goto done; args[n++] = &ptr4;
-  if (&ptr5  == &no_arg) goto done; args[n++] = &ptr5;
-  if (&ptr6  == &no_arg) goto done; args[n++] = &ptr6;
-  if (&ptr7  == &no_arg) goto done; args[n++] = &ptr7;
-  if (&ptr8  == &no_arg) goto done; args[n++] = &ptr8;
-  if (&ptr9  == &no_arg) goto done; args[n++] = &ptr9;
-  if (&ptr10 == &no_arg) goto done; args[n++] = &ptr10;
-  if (&ptr11 == &no_arg) goto done; args[n++] = &ptr11;
-  if (&ptr12 == &no_arg) goto done; args[n++] = &ptr12;
-  if (&ptr13 == &no_arg) goto done; args[n++] = &ptr13;
-  if (&ptr14 == &no_arg) goto done; args[n++] = &ptr14;
-  if (&ptr15 == &no_arg) goto done; args[n++] = &ptr15;
-  if (&ptr16 == &no_arg) goto done; args[n++] = &ptr16;
- done:
-
-  int consumed;
-  int vec[kVecSize];
-  if (DoMatchImpl(*input, UNANCHORED, &consumed,
-                  args, n, vec, kVecSize)) {
-    input->remove_prefix(consumed);
-    return true;
-  } else {
-    return false;
-  }
-}
-
 bool RE::Replace(const StringPiece& rewrite,
                  string *str) const {
-  int vec[kVecSize];
-  int matches = TryMatch(*str, 0, UNANCHORED, true, vec, kVecSize);
+  pcre2_match_data_ptr match_data;
+  int matches = TryMatch(*str, 0, UNANCHORED, true, match_data);
   if (matches == 0)
     return false;
 
   string s;
-  if (!Rewrite(&s, rewrite, *str, vec, matches))
+  if (!Rewrite(&s, rewrite, *str, match_data))
     return false;
+
+  auto vec = pcre2_get_ovector_pointer(match_data.get());
 
   assert(vec[0] >= 0);
   assert(vec[1] >= 0);
@@ -346,45 +167,27 @@ bool RE::Replace(const StringPiece& rewrite,
   return true;
 }
 
-// Returns PCRE_NEWLINE_CRLF, PCRE_NEWLINE_CR, or PCRE_NEWLINE_LF.
-// Note that PCRE_NEWLINE_CRLF is defined to be P_N_CR | P_N_LF.
-// Modified by PH to add PCRE_NEWLINE_ANY and PCRE_NEWLINE_ANYCRLF.
-
-static int NewlineMode(int pcre_options) {
-  // TODO: if we can make it threadsafe, cache this var
-  int newline_mode = 0;
-  /* if (newline_mode) return newline_mode; */  // do this once it's cached
-  if (pcre_options & (PCRE_NEWLINE_CRLF|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
-                      PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF)) {
-    newline_mode = (pcre_options &
-                    (PCRE_NEWLINE_CRLF|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
-                     PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF));
-  } else {
-    int newline;
-    pcre_config(PCRE_CONFIG_NEWLINE, &newline);
-    if (newline == 10)
-      newline_mode = PCRE_NEWLINE_LF;
-    else if (newline == 13)
-      newline_mode = PCRE_NEWLINE_CR;
-    else if (newline == 3338)
-      newline_mode = PCRE_NEWLINE_CRLF;
-    else if (newline == -1)
-      newline_mode = PCRE_NEWLINE_ANY;
-    else if (newline == -2)
-      newline_mode = PCRE_NEWLINE_ANYCRLF;
-    else
-      assert(NULL == "Unexpected return value from pcre_config(NEWLINE)");
+static bool is_multi_char_newline_mode(int value) {
+  switch (value) {
+    case PCRE2_NEWLINE_CR:
+    case PCRE2_NEWLINE_LF:
+      return false;
+    case PCRE2_NEWLINE_CRLF:
+    case PCRE2_NEWLINE_ANY:
+    case PCRE2_NEWLINE_ANYCRLF:
+      return true;
+    default:
+      return false;
   }
-  return newline_mode;
 }
 
 int RE::GlobalReplace(const StringPiece& rewrite,
                       string *str) const {
   int count = 0;
-  int vec[kVecSize];
   string out;
   int start = 0;
   bool last_match_was_empty_string = false;
+  pcre2_match_data_ptr match_data;
 
   while (start <= static_cast<int>(str->length())) {
     // If the previous match was for the empty string, we shouldn't
@@ -399,19 +202,17 @@ int RE::GlobalReplace(const StringPiece& rewrite,
     //    perl -le '$_ = "aa"; s/b*|aa/@/g; print'
     int matches;
     if (last_match_was_empty_string) {
-      matches = TryMatch(*str, start, ANCHOR_START, false, vec, kVecSize);
+      matches = TryMatch(*str, start, ANCHOR_START, false, match_data);
       if (matches <= 0) {
         int matchend = start + 1;     // advance one character.
         // If the current char is CR and we're in CRLF mode, skip LF too.
-        // Note it's better to call pcre_fullinfo() than to examine
-        // all_options(), since options_ could have changed bewteen
+        // Note it's better to call pcre2_pattern_info() than to examine
+        // all_options(), since options_ could have changed between
         // compile-time and now, but this is simpler and safe enough.
         // Modified by PH to add ANY and ANYCRLF.
         if (matchend < static_cast<int>(str->length()) &&
             (*str)[start] == '\r' && (*str)[matchend] == '\n' &&
-            (NewlineMode(options_.all_options()) == PCRE_NEWLINE_CRLF ||
-             NewlineMode(options_.all_options()) == PCRE_NEWLINE_ANY ||
-             NewlineMode(options_.all_options()) == PCRE_NEWLINE_ANYCRLF)) {
+            is_multi_char_newline_mode(options_.newline_mode())) {
           matchend++;
         }
         // We also need to advance more than one char if we're in utf8 mode.
@@ -429,15 +230,16 @@ int RE::GlobalReplace(const StringPiece& rewrite,
         continue;
       }
     } else {
-      matches = TryMatch(*str, start, UNANCHORED, true, vec, kVecSize);
+      matches = TryMatch(*str, start, UNANCHORED, true, match_data);
       if (matches <= 0)
         break;
     }
+    auto vec = pcre2_get_ovector_pointer(match_data.get());
     int matchstart = vec[0], matchend = vec[1];
     assert(matchstart >= start);
     assert(matchend >= matchstart);
     out.append(*str, start, matchstart - start);
-    Rewrite(&out, rewrite, *str, vec, matches);
+    Rewrite(&out, rewrite, *str, match_data);
     start = matchend;
     count++;
     last_match_was_empty_string = (matchstart == matchend);
@@ -455,12 +257,12 @@ int RE::GlobalReplace(const StringPiece& rewrite,
 bool RE::Extract(const StringPiece& rewrite,
                  const StringPiece& text,
                  string *out) const {
-  int vec[kVecSize];
-  int matches = TryMatch(text, 0, UNANCHORED, true, vec, kVecSize);
+  pcre2_match_data_ptr match_data;
+  int matches = TryMatch(text, 0, UNANCHORED, true, match_data);
   if (matches == 0)
     return false;
   out->erase();
-  return Rewrite(out, rewrite, text, vec, matches);
+  return Rewrite(out, rewrite, text, match_data);
 }
 
 /*static*/ string RE::QuoteMeta(const StringPiece& unquoted) {
@@ -498,79 +300,84 @@ bool RE::Extract(const StringPiece& rewrite,
 }
 
 /***** Actual matching and rewriting code *****/
-
 int RE::TryMatch(const StringPiece& text,
                  int startpos,
                  Anchor anchor,
                  bool empty_ok,
-                 int *vec,
-                 int vecsize) const {
-  pcre* re = (anchor == ANCHOR_BOTH) ? re_full_ : re_partial_;
+                 pcre2_match_data_ptr & match_data) const {
+  typedef std::unique_ptr<pcre2_match_context,
+      decltype(pcre2_match_context_free)*> match_context_ptr;
+
+  pcre2_code* re = (anchor == ANCHOR_BOTH) ? re_full_ : re_partial_;
   if (re == NULL) {
     //fprintf(stderr, "Matching against invalid re: %s\n", error_->c_str());
     return 0;
   }
+  match_context_ptr match_context = match_context_ptr(
+      pcre2_match_context_create(NULL),
+      pcre2_match_context_free);
+  if (!match_context)
+    return 0;
 
-  pcre_extra extra = { 0, 0, 0, 0, 0, 0, 0, 0 };
   if (options_.match_limit() > 0) {
-    extra.flags |= PCRE_EXTRA_MATCH_LIMIT;
-    extra.match_limit = options_.match_limit();
+    pcre2_set_match_limit(match_context.get(), options_.match_limit());
   }
   if (options_.match_limit_recursion() > 0) {
-    extra.flags |= PCRE_EXTRA_MATCH_LIMIT_RECURSION;
-    extra.match_limit_recursion = options_.match_limit_recursion();
+    pcre2_set_recursion_limit(match_context.get(),
+                              options_.match_limit_recursion());
+  }
+
+  match_data = pcre2_match_data_ptr(
+      pcre2_match_data_create_from_pattern(re, NULL),
+      pcre2_match_data_free);
+  if (!match_data) {
+    return 0;
   }
 
   // int options = 0;
   // Changed by PH as a result of bugzilla #1288
-  int options = (options_.all_options() & PCRE_NO_UTF8_CHECK);
+  int options = (options_.all_options() & PCRE2_NO_UTF_CHECK);
 
   if (anchor != UNANCHORED)
-    options |= PCRE_ANCHORED;
+    options |= PCRE2_ANCHORED;
   if (!empty_ok)
-    options |= PCRE_NOTEMPTY;
+    options |= PCRE2_NOTEMPTY;
 
-  int rc = pcre_exec(re,              // The regular expression object
-                     &extra,
-                     (text.data() == NULL) ? "" : text.data(),
-                     text.size(),
-                     startpos,
-                     options,
-                     vec,
-                     vecsize);
+  int rc = pcre2_match(
+      re, reinterpret_cast<PCRE2_SPTR>((text.empty()) ? "" : text.data()),
+      text.size(), startpos, options, match_data.get(), match_context.get());
 
   // Handle errors
-  if (rc == PCRE_ERROR_NOMATCH) {
+  if (rc == PCRE2_ERROR_NOMATCH) {
+    return 0;
+  }
+  if (rc == PCRE2_ERROR_PARTIAL) {
+    // not sure what to do with partial yet
     return 0;
   } else if (rc < 0) {
-    //fprintf(stderr, "Unexpected return code: %d when matching '%s'\n",
-    //        re, pattern_.c_str());
+    // For any other error condition also return 0.
     return 0;
-  } else if (rc == 0) {
-    // pcre_exec() returns 0 as a special case when the number of
-    // capturing subpatterns exceeds the size of the vector.
-    // When this happens, there is a match and the output vector
-    // is filled, but we miss out on the positions of the extra subpatterns.
-    rc = vecsize / 2;
   }
 
-  return rc;
+  return rc; // return number of matches found
 }
 
 bool RE::DoMatchImpl(const StringPiece& text,
                      Anchor anchor,
                      int* consumed,
-                     const Arg* const* args,
-                     int n,
-                     int* vec,
-                     int vecsize) const {
-  assert((1 + n) * 3 <= vecsize);  // results + PCRE workspace
-  int matches = TryMatch(text, 0, anchor, true, vec, vecsize);
+                     const Arg* args,
+                     int n) const {
+  pcre2_match_data_ptr match_data;
+  int matches = TryMatch(text, 0, anchor, true, match_data);
   assert(matches >= 0);  // TryMatch never returns negatives
   if (matches == 0)
     return false;
 
-  *consumed = vec[1];
+  auto vec = pcre2_get_ovector_pointer(match_data.get());
+
+  // allow for NULL
+  if (consumed != NULL)
+    *consumed = vec[1];
 
   if (n == 0 || args == NULL) {
     // We are not interested in results
@@ -588,7 +395,7 @@ bool RE::DoMatchImpl(const StringPiece& text,
   for (int i = 0; i < n; i++) {
     const int start = vec[2*(i+1)];
     const int limit = vec[2*(i+1)+1];
-    if (!args[i]->Parse(text.data() + start, limit-start)) {
+    if (!args[i].Parse(text.data() + start, limit - start)) {
       // TODO: Should we indicate what the error was?
       return false;
     }
@@ -600,27 +407,25 @@ bool RE::DoMatchImpl(const StringPiece& text,
 bool RE::DoMatch(const StringPiece& text,
                  Anchor anchor,
                  int* consumed,
-                 const Arg* const args[],
+                 Arg const args[],
                  int n) const {
   assert(n >= 0);
-  size_t const vecsize = (1 + n) * 3;  // results + PCRE workspace
-                                       // (as for kVecSize)
-  int space[21];   // use stack allocation for small vecsize (common case)
-  int* vec = vecsize <= 21 ? space : new int[vecsize];
-  bool retval = DoMatchImpl(text, anchor, consumed, args, n, vec, (int)vecsize);
-  if (vec != space) delete [] vec;
+  bool retval = DoMatchImpl(text, anchor, consumed, args, n);
   return retval;
 }
 
 bool RE::Rewrite(string *out, const StringPiece &rewrite,
-                 const StringPiece &text, int *vec, int veclen) const {
+                 const StringPiece &text,
+                 pcre2_match_data_ptr const & match_data) const {
+  auto veclen = pcre2_get_ovector_count(match_data.get());
+  auto vec = pcre2_get_ovector_pointer(match_data.get());
   for (const char *s = rewrite.data(), *end = s + rewrite.size();
        s < end; s++) {
     int c = *s;
     if (c == '\\') {
       c = *++s;
       if (isdigit(c)) {
-        int n = (c - '0');
+        decltype(veclen) n = (c - '0');
         if (n >= veclen) {
           //fprintf(stderr, requested group %d in regexp %.*s\n",
           //        n, rewrite.size(), rewrite.data());
@@ -649,10 +454,8 @@ int RE::NumberOfCapturingGroups() const {
   if (re_partial_ == NULL) return -1;
 
   int result;
-  int pcre_retval = pcre_fullinfo(re_partial_,  // The regular expression object
-                                  NULL,         // We did not study the pattern
-                                  PCRE_INFO_CAPTURECOUNT,
-                                  &result);
+  int pcre_retval = pcre2_pattern_info(re_partial_, PCRE2_INFO_CAPTURECOUNT,
+                                       &result);
   assert(pcre_retval == 0);
   return result;
 }

@@ -29,10 +29,6 @@
 //
 // Author: Sanjay Ghemawat
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
-
 #include <vector>
 #include <assert.h>
 
@@ -129,15 +125,6 @@ bool Scanner::LookingAt(const RE& re) const {
   return re.DoMatch(input_, RE::ANCHOR_START, &consumed, 0, 0);
 }
 
-
-bool Scanner::Consume(const RE& re,
-                      const Arg& arg0,
-                      const Arg& arg1,
-                      const Arg& arg2) {
-  const bool result = re.Consume(&input_, arg0, arg1, arg2);
-  if (result && should_skip_) ConsumeSkip();
-  return result;
-}
 
 // helper function to consume *skip_ and honour save_comments_
 void Scanner::ConsumeSkip() {
