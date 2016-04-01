@@ -333,7 +333,8 @@ static void TestReplace() {
 #endif
 
   for (const ReplaceTest *t = tests; t->original != NULL; ++t) {
-    RE re(t->regexp, RE_Options(PCRE_NEWLINE_CRLF).set_utf8(support_utf8));
+    RE re(t->regexp, RE_Options().set_newline_mode(PCRE2_NEWLINE_CRLF)
+                                 .set_utf(support_utf8));
     assert(re.error().empty());
     string one(t->original);
     CHECK(re.Replace(t->rewrite, &one));
@@ -346,14 +347,16 @@ static void TestReplace() {
 
   // One final test: test \r\n replacement when we're not in CRLF mode
   {
-    RE re("b*", RE_Options(PCRE_NEWLINE_CR).set_utf8(support_utf8));
+    RE re("b*", RE_Options().set_newline_mode(PCRE2_NEWLINE_CR)
+                            .set_utf(support_utf8));
     assert(re.error().empty());
     string all("aa\r\naa\r\n");
     CHECK_EQ(re.GlobalReplace("bb", &all), 9);
     CHECK_EQ(all, string("bbabbabb\rbb\nbbabbabb\rbb\nbb"));
   }
   {
-    RE re("b*", RE_Options(PCRE_NEWLINE_LF).set_utf8(support_utf8));
+    RE re("b*", RE_Options().set_newline_mode(PCRE2_NEWLINE_LF)
+                            .set_utf(support_utf8));
     assert(re.error().empty());
     string all("aa\r\naa\r\n");
     CHECK_EQ(re.GlobalReplace("bb", &all), 9);
@@ -662,17 +665,6 @@ static void Test_DOLLAR_ENDONLY() {
   TestOneOption("DOLLAR_ENDONLY 2",    "world$", str, options2.set_dollar_endonly(true), false, false);
 }
 
-static void Test_EXTRA() {
-  RE_Options options;
-  const char *str = "HELLO";
-
-  options.set_extra(true);
-  TestOneOption("EXTRA 1", "\\HELL\\O", str, options, true, false );
-  TestOneOption("EXTRA 2", "\\HELL\\O", str, RE_Options().set_extra(true), true, false );
-  options.set_extra(false);
-  TestOneOption("no EXTRA", "\\HELL\\O", str, options, true );
-}
-
 static void Test_EXTENDED() {
   RE_Options options;
   RE_Options options2;
@@ -738,18 +730,18 @@ static void Test_UNGREEDY() {
 static void Test_all_options() {
   const char *str = "HELLO\n" "cruel\n" "world";
   RE_Options options;
-  options.set_all_options(PCRE_CASELESS | PCRE_DOTALL);
+  options.set_all_options(PCRE2_CASELESS | PCRE2_DOTALL);
 
   TestOneOption("all_options (CASELESS|DOTALL)", "^hello.*WORLD", str , options, false);
   options.set_all_options(0);
   TestOneOption("all_options (0)", "^hello.*WORLD", str , options, false, false);
-  options.set_all_options(PCRE_MULTILINE | PCRE_EXTENDED);
+  options.set_all_options(PCRE2_MULTILINE | PCRE2_EXTENDED);
 
   TestOneOption("all_options (MULTILINE|EXTENDED)", " ^ c r u e l $ ", str, options, false);
   TestOneOption("all_options (MULTILINE|EXTENDED) with constructor",
                   " ^ c r u e l $ ",
                   str,
-                  RE_Options(PCRE_MULTILINE | PCRE_EXTENDED),
+                  RE_Options(PCRE2_MULTILINE | PCRE2_EXTENDED),
                   false);
 
   TestOneOption("all_options (MULTILINE|EXTENDED) with concatenation",
@@ -774,7 +766,6 @@ static void TestOptions() {
   Test_EXTENDED();
   Test_NO_AUTO_CAPTURE();
   Test_UNGREEDY();
-  Test_EXTRA();
   Test_all_options();
 }
 

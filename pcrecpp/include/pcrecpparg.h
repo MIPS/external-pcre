@@ -35,7 +35,7 @@
 #include <stdlib.h>    // for NULL
 #include <string>
 
-#include <pcre.h>
+#include <pcre2.h>
 
 namespace pcrecpp {
 
@@ -54,7 +54,7 @@ class _RE_MatchObject {
   }
 };
 
-class PCRECPP_EXP_DEFN Arg {
+class Arg {
  public:
   // Empty constructor so we can declare arrays of Arg
   Arg();
@@ -167,6 +167,40 @@ MAKE_INTEGER_PARSER(unsigned long long, ulonglong) /*                        */
 #undef PCRE_IS_SET
 #undef PCRE_SET_OR_CLEAR
 #undef MAKE_INTEGER_PARSER
+
+template<typename ARG>
+inline Arg wrap_arg(ARG && any) {
+  return Arg(any);
+}
+
+inline Arg const & wrap_arg(Arg const & arg) {
+  return arg;
+}
+
+template<typename ... ARGS>
+struct Args;
+
+template<typename HEAD, typename ... TAIL>
+struct Args<HEAD, TAIL...> {
+  typedef Args<TAIL...> next;
+  constexpr static unsigned count() {
+    return 1 + next::count();
+  }
+  template<typename _HEAD, typename ... _TAIL>
+  inline static void arrayify(Arg * ptr, _HEAD && head, _TAIL && ... tail) {
+    *ptr++ = wrap_arg(head);
+    next::arrayify(ptr, tail...);
+  }
+};
+
+template<>
+struct Args<> {
+  constexpr static unsigned count() {
+    return 0;
+  }
+  inline static void arrayify(Arg *) {
+  }
+};
 
 }   // namespace pcrecpp
 

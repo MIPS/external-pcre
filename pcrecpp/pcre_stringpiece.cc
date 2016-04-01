@@ -30,10 +30,6 @@
 // Author: wilsonh@google.com (Wilson Hsieh)
 //
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
-
 #include <iostream>
 #include "pcrecpp_internal.h"
 #include "pcre_stringpiece.h"

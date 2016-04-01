@@ -331,11 +331,12 @@
 
 
 #include <string>
-#include <pcre.h>
+#include <pcre2.h>
 #include <pcrecpparg.h>   // defines the Arg class
 // This isn't technically needed here, but we include it
 // anyway so folks who include pcrecpp.h don't have to.
 #include <pcre_stringpiece.h>
+#include <memory>
 
 namespace pcrecpp {
 
@@ -346,16 +347,23 @@ namespace pcrecpp {
 #define PCRE_IS_SET(o)  \
         (all_options_ & o) == o
 
+typedef std::shared_ptr<pcre2_match_data> pcre2_match_data_ptr;
+
 /***** Compiling regular expressions: the RE class *****/
 
 // RE_Options allow you to set options to be passed along to pcre,
 // along with other options we put on top of pcre.
 // Only 9 modifiers, plus match_limit and match_limit_recursion,
 // are supported now.
-class PCRECPP_EXP_DEFN RE_Options {
+class RE_Options {
  public:
   // constructor
-  RE_Options() : match_limit_(0), match_limit_recursion_(0), all_options_(0) {}
+  RE_Options()
+      : newline_mode_(0),
+        match_limit_(0),
+        match_limit_recursion_(0),
+        all_options_(0) {
+  }
 
   // alternative constructor.
   // To facilitate transfer of legacy code from C programs
@@ -365,8 +373,12 @@ class PCRECPP_EXP_DEFN RE_Options {
   // But new code is better off doing
   //    RE(pattern,
   //      RE_Options().set_caseless(true).set_multiline(true)).PartialMatch(str);
-  RE_Options(int option_flags) : match_limit_(0), match_limit_recursion_(0),
-                                 all_options_(option_flags) {}
+  RE_Options(int option_flags)
+      : newline_mode_(0),
+        match_limit_(0),
+        match_limit_recursion_(0),
+        all_options_(option_flags) {
+  }
   // we're fine with the default destructor, copy constructor, etc.
 
   // accessors and mutators
@@ -383,66 +395,74 @@ class PCRECPP_EXP_DEFN RE_Options {
   }
 
   bool caseless() const {
-    return PCRE_IS_SET(PCRE_CASELESS);
+    return PCRE_IS_SET(PCRE2_CASELESS);
   }
   RE_Options &set_caseless(bool x) {
-    PCRE_SET_OR_CLEAR(x, PCRE_CASELESS);
+    PCRE_SET_OR_CLEAR(x, PCRE2_CASELESS);
   }
 
   bool multiline() const {
-    return PCRE_IS_SET(PCRE_MULTILINE);
+    return PCRE_IS_SET(PCRE2_MULTILINE);
   }
   RE_Options &set_multiline(bool x) {
-    PCRE_SET_OR_CLEAR(x, PCRE_MULTILINE);
+    PCRE_SET_OR_CLEAR(x, PCRE2_MULTILINE);
+  }
+
+  int newline_mode() const {
+    if(newline_mode_)
+      return newline_mode_;
+    else {
+      // if newline_mode_ is 0 return the global configuration default
+      int value;
+      pcre2_config_8(PCRE2_CONFIG_NEWLINE, &value);
+      return value;
+    }
+  }
+  RE_Options & set_newline_mode(int newline_mode) {
+    newline_mode_ = newline_mode;
+    return *this;
   }
 
   bool dotall() const {
-    return PCRE_IS_SET(PCRE_DOTALL);
+    return PCRE_IS_SET(PCRE2_DOTALL);
   }
   RE_Options &set_dotall(bool x) {
-    PCRE_SET_OR_CLEAR(x, PCRE_DOTALL);
+    PCRE_SET_OR_CLEAR(x, PCRE2_DOTALL);
   }
 
   bool extended() const {
-    return PCRE_IS_SET(PCRE_EXTENDED);
+    return PCRE_IS_SET(PCRE2_EXTENDED);
   }
   RE_Options &set_extended(bool x) {
-    PCRE_SET_OR_CLEAR(x, PCRE_EXTENDED);
+    PCRE_SET_OR_CLEAR(x, PCRE2_EXTENDED);
   }
 
   bool dollar_endonly() const {
-    return PCRE_IS_SET(PCRE_DOLLAR_ENDONLY);
+    return PCRE_IS_SET(PCRE2_DOLLAR_ENDONLY);
   }
   RE_Options &set_dollar_endonly(bool x) {
-    PCRE_SET_OR_CLEAR(x, PCRE_DOLLAR_ENDONLY);
-  }
-
-  bool extra() const {
-    return PCRE_IS_SET(PCRE_EXTRA);
-  }
-  RE_Options &set_extra(bool x) {
-    PCRE_SET_OR_CLEAR(x, PCRE_EXTRA);
+    PCRE_SET_OR_CLEAR(x, PCRE2_DOLLAR_ENDONLY);
   }
 
   bool ungreedy() const {
-    return PCRE_IS_SET(PCRE_UNGREEDY);
+    return PCRE_IS_SET(PCRE2_UNGREEDY);
   }
   RE_Options &set_ungreedy(bool x) {
-    PCRE_SET_OR_CLEAR(x, PCRE_UNGREEDY);
+    PCRE_SET_OR_CLEAR(x, PCRE2_UNGREEDY);
   }
 
-  bool utf8() const {
-    return PCRE_IS_SET(PCRE_UTF8);
+  bool utf() const {
+    return PCRE_IS_SET(PCRE2_UTF);
   }
-  RE_Options &set_utf8(bool x) {
-    PCRE_SET_OR_CLEAR(x, PCRE_UTF8);
+  RE_Options &set_utf(bool x) {
+    PCRE_SET_OR_CLEAR(x, PCRE2_UTF);
   }
 
   bool no_auto_capture() const {
-    return PCRE_IS_SET(PCRE_NO_AUTO_CAPTURE);
+    return PCRE_IS_SET(PCRE2_NO_AUTO_CAPTURE);
   }
   RE_Options &set_no_auto_capture(bool x) {
-    PCRE_SET_OR_CLEAR(x, PCRE_NO_AUTO_CAPTURE);
+    PCRE_SET_OR_CLEAR(x, PCRE2_NO_AUTO_CAPTURE);
   }
 
   RE_Options &set_all_options(int opt) {
@@ -456,14 +476,15 @@ class PCRECPP_EXP_DEFN RE_Options {
   // TODO: add other pcre flags
 
  private:
+  int newline_mode_;
   int match_limit_;
   int match_limit_recursion_;
   int all_options_;
 };
 
 // These functions return some common RE_Options
-static inline RE_Options UTF8() {
-  return RE_Options().set_utf8(true);
+static inline RE_Options UTF() {
+  return RE_Options().set_utf(true);
 }
 
 static inline RE_Options CASELESS() {
@@ -484,7 +505,7 @@ static inline RE_Options EXTENDED() {
 // Interface for regular expression matching.  Also corresponds to a
 // pre-compiled regular expression.  An "RE" object is safe for
 // concurrent use by multiple threads.
-class PCRECPP_EXP_DEFN RE {
+class RE {
  public:
   // We provide implicit conversions from strings so that users can
   // pass in a string or a "const char*" wherever an "RE" is expected.
@@ -525,84 +546,63 @@ class PCRECPP_EXP_DEFN RE {
 
   // If RE could not be created properly, returns an error string.
   // Else returns the empty string.
-  const string& error() const { return *error_; }
+  const string& error() const { return error_; }
 
   /***** The useful part: the matching interface *****/
 
   // This is provided so one can do pattern.ReplaceAll() just as
   // easily as ReplaceAll(pattern-text, ....)
 
-  bool FullMatch(const StringPiece& text,
-                 const Arg& ptr1 = no_arg,
-                 const Arg& ptr2 = no_arg,
-                 const Arg& ptr3 = no_arg,
-                 const Arg& ptr4 = no_arg,
-                 const Arg& ptr5 = no_arg,
-                 const Arg& ptr6 = no_arg,
-                 const Arg& ptr7 = no_arg,
-                 const Arg& ptr8 = no_arg,
-                 const Arg& ptr9 = no_arg,
-                 const Arg& ptr10 = no_arg,
-                 const Arg& ptr11 = no_arg,
-                 const Arg& ptr12 = no_arg,
-                 const Arg& ptr13 = no_arg,
-                 const Arg& ptr14 = no_arg,
-                 const Arg& ptr15 = no_arg,
-                 const Arg& ptr16 = no_arg) const;
+  template<typename ... ARGS>
+  bool FullMatch(const StringPiece & text, ARGS && ...a) const {
+    // create an array with the size of the number of arguments given
+    Arg args[Args<ARGS...>::count()];
+    // initialize the array with the arguments given
+    Args<ARGS...>::arrayify(args, a...);
 
-  bool PartialMatch(const StringPiece& text,
-                    const Arg& ptr1 = no_arg,
-                    const Arg& ptr2 = no_arg,
-                    const Arg& ptr3 = no_arg,
-                    const Arg& ptr4 = no_arg,
-                    const Arg& ptr5 = no_arg,
-                    const Arg& ptr6 = no_arg,
-                    const Arg& ptr7 = no_arg,
-                    const Arg& ptr8 = no_arg,
-                    const Arg& ptr9 = no_arg,
-                    const Arg& ptr10 = no_arg,
-                    const Arg& ptr11 = no_arg,
-                    const Arg& ptr12 = no_arg,
-                    const Arg& ptr13 = no_arg,
-                    const Arg& ptr14 = no_arg,
-                    const Arg& ptr15 = no_arg,
-                    const Arg& ptr16 = no_arg) const;
+    return DoMatchImpl(text, ANCHOR_BOTH, NULL, args, Args<ARGS...>::count());
+  }
 
-  bool Consume(StringPiece* input,
-               const Arg& ptr1 = no_arg,
-               const Arg& ptr2 = no_arg,
-               const Arg& ptr3 = no_arg,
-               const Arg& ptr4 = no_arg,
-               const Arg& ptr5 = no_arg,
-               const Arg& ptr6 = no_arg,
-               const Arg& ptr7 = no_arg,
-               const Arg& ptr8 = no_arg,
-               const Arg& ptr9 = no_arg,
-               const Arg& ptr10 = no_arg,
-               const Arg& ptr11 = no_arg,
-               const Arg& ptr12 = no_arg,
-               const Arg& ptr13 = no_arg,
-               const Arg& ptr14 = no_arg,
-               const Arg& ptr15 = no_arg,
-               const Arg& ptr16 = no_arg) const;
+  template<typename ... ARGS>
+  bool PartialMatch(const StringPiece& text, ARGS && ...a) const {
+    // create an array with the size of the number of arguments given
+    Arg args[Args<ARGS...>::count()];
+    // initialize the array with the arguments given
+    Args<ARGS...>::arrayify(args, a...);
 
-  bool FindAndConsume(StringPiece* input,
-                      const Arg& ptr1 = no_arg,
-                      const Arg& ptr2 = no_arg,
-                      const Arg& ptr3 = no_arg,
-                      const Arg& ptr4 = no_arg,
-                      const Arg& ptr5 = no_arg,
-                      const Arg& ptr6 = no_arg,
-                      const Arg& ptr7 = no_arg,
-                      const Arg& ptr8 = no_arg,
-                      const Arg& ptr9 = no_arg,
-                      const Arg& ptr10 = no_arg,
-                      const Arg& ptr11 = no_arg,
-                      const Arg& ptr12 = no_arg,
-                      const Arg& ptr13 = no_arg,
-                      const Arg& ptr14 = no_arg,
-                      const Arg& ptr15 = no_arg,
-                      const Arg& ptr16 = no_arg) const;
+    return DoMatchImpl(text, UNANCHORED, NULL, args, Args<ARGS...>::count());
+  }
+
+  template<typename ... ARGS>
+  bool Consume(StringPiece* input, ARGS && ...a) const {
+    // create an array with the size of the number of arguments given
+    Arg args[Args<ARGS...>::count()];
+    // initialize the array with the arguments given
+    Args<ARGS...>::arrayify(args, a...);
+
+    int consumed;
+    if (DoMatchImpl(*input, ANCHOR_START, &consumed, args,
+                    Args<ARGS...>::count())) {
+      input->remove_prefix(consumed);
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  template<typename ... ARGS>
+  bool FindAndConsume(StringPiece* input, ARGS && ...a) const {
+    Arg args[Args<ARGS...>::count()];
+    Args<ARGS...>::arrayify(args, a...);
+    int consumed;
+    if (DoMatchImpl(*input, UNANCHORED, &consumed, args,
+                    Args<ARGS...>::count())) {
+      input->remove_prefix(consumed);
+      return true;
+    } else {
+      return false;
+    }
+  }
 
   bool Replace(const StringPiece& rewrite,
                string *str) const;
@@ -640,20 +640,11 @@ class PCRECPP_EXP_DEFN RE {
   bool DoMatch(const StringPiece& text,
                Anchor anchor,
                int* consumed,
-               const Arg* const* args, int n) const;
+               Arg const argsp[], int n) const;
 
   // Return the number of capturing subpatterns, or -1 if the
   // regexp wasn't valid on construction.
   int NumberOfCapturingGroups() const;
-
-  // The default value for an argument, to indicate the end of the argument
-  // list. This must be used only in optional argument defaults. It should NOT
-  // be passed explicitly. Some people have tried to use it like this:
-  //
-  //   FullMatch(x, y, &z, no_arg, &w);
-  //
-  // This is a mistake, and will not work.
-  static Arg no_arg;
 
  private:
 
@@ -675,34 +666,30 @@ class PCRECPP_EXP_DEFN RE {
                int startpos,
                Anchor anchor,
                bool empty_ok,
-               int *vec,
-               int vecsize) const;
+               pcre2_match_data_ptr & match_data) const;
 
   // Append the "rewrite" string, with backslash subsitutions from "text"
   // and "vec", to string "out".
   bool Rewrite(string *out,
                const StringPiece& rewrite,
                const StringPiece& text,
-               int *vec,
-               int veclen) const;
+               pcre2_match_data_ptr const & match_data) const;
 
   // internal implementation for DoMatch
   bool DoMatchImpl(const StringPiece& text,
                    Anchor anchor,
                    int* consumed,
-                   const Arg* const args[],
-                   int n,
-                   int* vec,
-                   int vecsize) const;
+                   const Arg args[],
+                   int n) const;
 
   // Compile the regexp for the specified anchoring mode
-  pcre* Compile(Anchor anchor);
+  pcre2_code * Compile(Anchor anchor);
 
   string        pattern_;
   RE_Options    options_;
-  pcre*         re_full_;       // For full matches
-  pcre*         re_partial_;    // For partial matches
-  const string* error_;         // Error indicator (or points to empty string)
+  pcre2_code*   re_full_;       // For full matches
+  pcre2_code*   re_partial_;    // For partial matches
+  string        error_;         // Error indicator
 };
 
 }   // namespace pcrecpp

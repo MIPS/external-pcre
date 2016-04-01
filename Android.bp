@@ -50,12 +50,17 @@ cc_library {
 
 // === libpcrecpp targets ===
 
-//cc_library_shared {
-//    name: "libpcrecpp",
-//    cflags: libpcre_cflags,
-//    local_include_dirs: ["dist"],
-//
-//    srcs: libpcrecpp_src_files,
-//    shared_libs: ["libpcre"],
-//    export_include_dirs: ["."],
-//}
+cc_library_shared {
+    name: "libpcrecpp",
+    local_include_dirs: ["pcrecpp/include"],
+    shared_libs: ["libpcre2"],
+    export_include_dirs: [
+        "pcrecpp/include",
+        "include",
+    ],
+    srcs: [
+	"pcrecpp/pcrecpp.cc",
+        "pcrecpp/pcre_scanner.cc",
+        "pcrecpp/pcre_stringpiece.cc",
+    ],
+}
