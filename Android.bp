@@ -1,0 +1,56 @@
+
+cc_defaults {
+    name: "pcre_defaults",
+    cflags: [
+        "-DHAVE_CONFIG_H",
+        "-Wno-self-assign",
+        "-Wno-unused-parameter",
+    ],
+    local_include_dirs: ["dist"],
+    export_include_dirs: ["."],
+}
+
+// === libpcre targets ===
+
+cc_library {
+    name: "libpcre",
+    defaults: ["pcre_defaults"],
+    host_supported: true,
+    srcs: [
+        "pcre_chartables.c",
+        "dist/pcre_byte_order.c",
+        "dist/pcre_compile.c",
+        "dist/pcre_config.c",
+        "dist/pcre_dfa_exec.c",
+        "dist/pcre_exec.c",
+        "dist/pcre_fullinfo.c",
+        "dist/pcre_get.c",
+        "dist/pcre_globals.c",
+        "dist/pcre_jit_compile.c",
+        "dist/pcre_maketables.c",
+        "dist/pcre_newline.c",
+        "dist/pcre_ord2utf8.c",
+        "dist/pcre_refcount.c",
+        "dist/pcre_string_utils.c",
+        "dist/pcre_study.c",
+        "dist/pcre_tables.c",
+        "dist/pcre_ucd.c",
+        "dist/pcre_valid_utf8.c",
+        "dist/pcre_version.c",
+        "dist/pcre_xclass.c",
+    ],
+}
+
+// === libpcrecpp targets ===
+
+cc_library_shared {
+    name: "libpcrecpp",
+    defaults: ["pcre_defaults"],
+
+    srcs: [
+        "dist/pcrecpp.cc",
+        "dist/pcre_scanner.cc",
+        "dist/pcre_stringpiece.cc",
+    ],
+    shared_libs: ["libpcre"],
+}
