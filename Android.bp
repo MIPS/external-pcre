@@ -52,6 +52,7 @@ cc_library {
 
 cc_library_shared {
     name: "libpcrecpp",
+    cflags: ["-Wno-unused-parameter"],
     local_include_dirs: ["pcrecpp/include"],
     shared_libs: ["libpcre2"],
     export_include_dirs: [
