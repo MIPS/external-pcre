@@ -32,6 +32,10 @@ libpcre2_src_files = [
 cc_defaults {
     name: "pcre_defaults",
     cflags: ["-DHAVE_CONFIG_H"],
+    tidy_checks: [
+        "-google-build-using-namespace",
+        "-google-global-names-in-headers",
+    ],
     local_include_dirs: [
         "include_internal",
         "include",
@@ -62,6 +66,10 @@ cc_library {
 cc_library_shared {
     name: "libpcrecpp",
     cflags: ["-Wno-unused-parameter"],
+    tidy_checks: [
+        "-google-build-using-namespace",
+        "-google-global-names-in-headers",
+    ],
     local_include_dirs: ["pcrecpp/include"],
     shared_libs: ["libpcre2"],
     export_include_dirs: [
