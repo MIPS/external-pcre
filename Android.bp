@@ -50,6 +50,9 @@ cc_library {
     defaults: ["pcre_defaults"],
     host_supported: true,
     vendor_available: true,
+    vndk: {
+        enabled: true,
+    },
     srcs: libpcre2_src_files,
     target: {
         linux_bionic: {
