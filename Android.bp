@@ -47,7 +47,9 @@ cc_defaults {
     export_include_dirs: ["include"],
 }
 
-// === libpcre targets ===
+//
+// libpcre2
+//
 
 cc_library {
     name: "libpcre2",
@@ -65,7 +67,32 @@ cc_library {
     },
 }
 
-// === libpcrecpp targets ===
+//
+// PCRE grep
+//
+
+cc_defaults {
+    name: "grep_common",
+    defaults: ["pcre_defaults"],
+    srcs: [libpcre2_dist_prefix + "/src/pcre2grep.c"],
+    shared_libs: ["libpcre2"],
+}
+
+cc_binary {
+    name: "grep",
+    defaults: ["grep_common"],
+}
+
+cc_binary {
+    name: "grep_vendor",
+    defaults: ["grep_common"],
+    stem: "grep",
+    vendor: true,
+}
+
+//
+// Google's C++ wrapper.
+//
 
 cc_library_shared {
     name: "libpcrecpp",
